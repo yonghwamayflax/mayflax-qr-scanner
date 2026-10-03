@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scan Shelf QR</title>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 20px 16px;
+      background: #f5f8f9;
+      color: #172b36;
+      font: 16px/1.45 Arial, sans-serif;
+    }
+
+    main {
+      max-width: 520px;
+      margin: auto;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 26px;
+    }
+
+    p { color: #60717b; }
+
+    #reader {
+      width: 100%;
+      margin: 18px 0;
+      overflow: hidden;
+      border-radius: 14px;
+      background: white;
+    }
+
+    button, .back {
+      display: block;
+      width: 100%;
+      padding: 15px;
+      border: 0;
+      border-radius: 12px;
+      font: inherit;
+      font-weight: bold;
+      text-align: center;
+      text-decoration: none;
+    }
+
+    button {
+      background: #126b50;
+      color: white;
+      cursor: pointer;
+    }
+
+    button:disabled { opacity: .6; }
+
+    .back {
+      margin-top: 12px;
+      border: 1px solid #dbe4e8;
+      background: white;
+      color: #126b50;
+    }
+
+    #status {
+      min-height: 48px;
+      overflow-wrap: anywhere;
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <h1>Scan Shelf QR</h1>
+    <p>Point the camera at the shelf QR code.</p>
+
+    <button id="start" type="button">Open camera</button>
+    <div id="reader"></div>
+    <p id="status" aria-live="polite"></p>
+    <a id="back" class="back">Back to lookup</a>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+  <script>
+    const LOOKUP_URL =
+      'https://script.google.com/macros/s/AKfycbxyHlRba23KwsR8MAxhaksO0IG_pso2YxzZpaCcNLQajK1gd8M9SrRYnMGVOvh065fm_g/exec';
+
+    const button = document.getElementById('start');
+    const status = document.getElementById('status');
+
+    document.getElementById('back').href = LOOKUP_URL;
+
+    let scanner;
+    let detected = false;
+
+    button.addEventListener('click', async function () {
+      if (typeof Html5Qrcode === 'undefined') {
+        status.textContent =
+          'Scanner could not load. Check your internet connection and refresh.';
+        return;
+      }
+
+      button.disabled = true;
+      status.textContent = 'Opening camera…';
+      detected = false;
+
+      try {
+        scanner = new Html5Qrcode('reader', {
+          formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+          verbose: false
+        });
+
+        await scanner.start(
+          { facingMode: 'environment' },
+          {
+            fps: 10,
+            qrbox: function (width, height) {
+              const size = Math.floor(Math.min(width, height) * 0.7);
+              return { width: size, height: size };
+            }
+          },
+          async function (text) {
+            if (detected) return;
+
+            const code = String(text).trim().toUpperCase();
+            if (!code) return;
+
+            detected = true;
+            status.textContent = 'Found ' + code + '. Opening result…';
+
+            try {
+              await scanner.stop();
+            } catch (error) {
+              // Navigation also releases the camera.
+            }
+
+            const destination = new URL(LOOKUP_URL);
+            destination.searchParams.set('itemCode', code);
+            window.location.replace(destination.toString());
+          },
+          function () {
+            // Keep scanning until a readable QR is detected.
+          }
+        );
+
+        button.hidden = true;
+        status.textContent = 'Hold the QR code steady inside the frame.';
+      } catch (error) {
+        button.disabled = false;
+        status.textContent =
+          'Camera could not open. Allow camera access in Chrome, then try again.';
+      }
+    });
+  </script>
+</body>
+</html>
