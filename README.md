@@ -1,0 +1,1 @@
+# mayflax-qr-scanner
