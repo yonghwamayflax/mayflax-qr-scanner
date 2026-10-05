@@ -100,6 +100,7 @@
 <body>
   <main>
     <h1>Scan Shelf QR</h1>
+
     <p>Point the camera at the shelf QR code.</p>
 
     <div id="reader"></div>
@@ -108,205 +109,258 @@
       Opening camera…
     </p>
 
-    <button id="start" type="button">
-      Restart camera
+    <button id="start" type="button" hidden>
+      Open camera
     </button>
 
-    <a id="back" class="back">
-      Back to lookup
-    </a>
+    <a id="back" class="back">Back to lookup</a>
 
     <p class="version">
-      Scanner version: 2026-10-05.3
+      Scanner version: 2026-10-05.4
     </p>
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 
-<script>
-  const LOOKUP_URL =
-    'https://script.google.com/macros/s/AKfycbxyHlRba23KwsR8MAxhaksO0IG_pso2YxzZpaCcNLQajK1gd8M9SrRYnMGVOvh065fm_g/exec';
+  <script>
+    const LOOKUP_URL =
+      'https://script.google.com/macros/s/AKfycbxyHlRba23KwsR8MAxhaksO0IG_pso2YxzZpaCcNLQajK1gd8M9SrRYnMGVOvh065fm_g/exec';
 
-  const button = document.getElementById('start');
-  const status = document.getElementById('status');
-  const reader = document.getElementById('reader');
-  const backLink = document.getElementById('back');
+    const button = document.getElementById('start');
+    const status = document.getElementById('status');
+    const reader = document.getElementById('reader');
+    const backLink = document.getElementById('back');
 
-  backLink.href = LOOKUP_URL;
+    backLink.href = LOOKUP_URL;
 
-  let scanner = null;
-  let starting = false;
-  let detected = false;
-  let leaving = false;
+    let scanner = null;
+    let starting = false;
+    let detected = false;
+    let leaving = false;
+    let videoObserver = null;
 
-  function releaseTracks() {
-    reader.querySelectorAll('video').forEach(function (video) {
-      const stream = video.srcObject;
+    function prepareVideo(video) {
+      video.muted = true;
+      video.defaultMuted = true;
+      video.autoplay = true;
+      video.playsInline = true;
 
-      if (stream && stream.getTracks) {
-        stream.getTracks().forEach(function (track) {
-          track.stop();
-        });
-      }
-    });
-  }
-
-  async function stopCamera() {
-    const previous = scanner;
-    scanner = null;
-
-    if (previous) {
-      try {
-        if (previous.isScanning) {
-          await previous.stop();
-        }
-      } catch (error) {
-        // Release remaining tracks below.
-      }
+      video.setAttribute('muted', '');
+      video.setAttribute('autoplay', '');
+      video.setAttribute('playsinline', '');
     }
 
-    releaseTracks();
+    function observeVideo() {
+      disconnectObserver();
 
-    if (previous) {
-      try {
-        previous.clear();
-      } catch (error) {
-        // Reset the reader below.
-      }
-    }
-
-    reader.innerHTML = '';
-  }
-
-  async function openCamera() {
-    if (starting || detected || leaving) return;
-
-    starting = true;
-    button.disabled = true;
-    status.textContent = 'Opening camera…';
-
-    try {
-      await stopCamera();
-
-      if (typeof Html5Qrcode === 'undefined') {
-        throw new Error(
-          'Scanner library did not load. Refresh the page.'
-        );
-      }
-
-      scanner = new Html5Qrcode('reader', {
-        formatsToSupport: [
-          Html5QrcodeSupportedFormats.QR_CODE
-        ],
-        verbose: false
+      videoObserver = new MutationObserver(function () {
+        reader.querySelectorAll('video').forEach(prepareVideo);
       });
 
-      await scanner.start(
-        { facingMode: 'environment' },
-        {
-          fps: 10,
-          qrbox: function (width, height) {
-            const size = Math.floor(
-              Math.min(width, height) * 0.7
-            );
+      videoObserver.observe(reader, {
+        childList: true,
+        subtree: true
+      });
 
-            return { width: size, height: size };
-          }
-        },
-        onQrDetected,
-        function () {
-          // Continue scanning.
+      reader.querySelectorAll('video').forEach(prepareVideo);
+    }
+
+    function disconnectObserver() {
+      if (videoObserver) {
+        videoObserver.disconnect();
+        videoObserver = null;
+      }
+    }
+
+    function releaseTracks() {
+      reader.querySelectorAll('video').forEach(function (video) {
+        const stream = video.srcObject;
+
+        if (stream && typeof stream.getTracks === 'function') {
+          stream.getTracks().forEach(function (track) {
+            track.stop();
+          });
         }
+      });
+    }
+
+    async function stopCamera() {
+      disconnectObserver();
+
+      const previous = scanner;
+      scanner = null;
+
+      if (previous) {
+        try {
+          if (previous.isScanning) {
+            await previous.stop();
+          }
+        } catch (error) {
+          // Release any remaining tracks below.
+        }
+      }
+
+      releaseTracks();
+
+      if (previous) {
+        try {
+          previous.clear();
+        } catch (error) {
+          // Reset the reader below.
+        }
+      }
+
+      reader.innerHTML = '';
+    }
+
+    function showCameraError(error) {
+      const message = String(
+        error && error.message ? error.message : error
       );
 
-      if (leaving) {
-        await stopCamera();
-        return;
-      }
+      button.hidden = false;
+      button.disabled = false;
+      button.textContent = 'Open camera';
 
-      const video = reader.querySelector('video');
-
-      if (video) {
-        video.muted = true;
-        video.setAttribute('playsinline', '');
-
-        await video.play();
-      }
-
-      if (!detected) {
+      if (/interact|gesture|autoplay|NotAllowedError.*play/i.test(message)) {
         status.textContent =
-          'Hold the QR code steady inside the frame.';
+          'Chrome requires a tap to start the preview. Tap Open camera.';
+      } else {
+        status.textContent = 'Camera error: ' + message;
       }
-    } catch (error) {
+    }
+
+    async function openCamera() {
+      if (starting || detected || leaving) return;
+
+      starting = true;
+      button.disabled = true;
+      status.textContent = 'Opening camera…';
+
+      try {
+        await stopCamera();
+
+        if (typeof Html5Qrcode === 'undefined') {
+          throw new Error(
+            'Scanner library did not load. Check your connection and refresh.'
+          );
+        }
+
+        if (!navigator.mediaDevices ||
+            !navigator.mediaDevices.getUserMedia) {
+          throw new Error(
+            'Camera access is unavailable. Open this page directly in Chrome.'
+          );
+        }
+
+        // Apply muted playback settings when the preview is created.
+        observeVideo();
+
+        scanner = new Html5Qrcode('reader', {
+          formatsToSupport: [
+            Html5QrcodeSupportedFormats.QR_CODE
+          ],
+          verbose: false
+        });
+
+        await scanner.start(
+          { facingMode: 'environment' },
+          {
+            fps: 10,
+            qrbox: function (width, height) {
+              const size = Math.floor(
+                Math.min(width, height) * 0.7
+              );
+
+              return {
+                width: size,
+                height: size
+              };
+            }
+          },
+          onQrDetected,
+          function () {
+            // Continue looking for a readable QR code.
+          }
+        );
+
+        disconnectObserver();
+
+        if (leaving) {
+          await stopCamera();
+          return;
+        }
+
+        if (!detected) {
+          button.hidden = false;
+          button.textContent = 'Restart camera';
+
+          status.textContent =
+            'Hold the QR code steady inside the frame.';
+        }
+      } catch (error) {
+        await stopCamera();
+
+        if (!leaving && !detected) {
+          showCameraError(error);
+        }
+      } finally {
+        starting = false;
+        button.disabled = detected;
+      }
+    }
+
+    async function onQrDetected(text) {
+      if (detected || leaving) return;
+
+      const code = String(text).trim().toUpperCase();
+      if (!code) return;
+
+      detected = true;
+      button.disabled = true;
+
+      status.textContent =
+        'Found ' + code + '. Opening result…';
+
+      // Avoid stopping while the scanner is still starting.
+      while (starting && !leaving) {
+        await new Promise(function (resolve) {
+          setTimeout(resolve, 50);
+        });
+      }
+
+      if (leaving) return;
+
       await stopCamera();
 
-      if (!leaving && !detected) {
-        status.textContent =
-          'Camera error: ' +
-          String(error && error.message ? error.message : error);
+      const destination = new URL(LOOKUP_URL);
+      destination.searchParams.set('itemCode', code);
+
+      window.location.replace(destination.toString());
+    }
+
+    button.addEventListener('click', openCamera);
+
+    backLink.addEventListener('click', function () {
+      leaving = true;
+      disconnectObserver();
+      releaseTracks();
+    });
+
+    window.addEventListener('pagehide', function () {
+      leaving = true;
+      disconnectObserver();
+      releaseTracks();
+    });
+
+    window.addEventListener('pageshow', function (event) {
+      if (event.persisted) {
+        window.location.reload();
       }
-    } finally {
-      starting = false;
-      button.disabled = detected;
-      button.hidden = false;
-      button.textContent = 'Restart camera';
-    }
-  }
+    });
 
-  async function onQrDetected(text) {
-    if (detected || leaving) return;
-
-    const code = String(text).trim().toUpperCase();
-    if (!code) return;
-
-    detected = true;
-    button.disabled = true;
-    status.textContent =
-      'Found ' + code + '. Opening result…';
-
-    // Wait for startup to finish before stopping the scanner.
-    while (starting) {
-      await new Promise(function (resolve) {
-        setTimeout(resolve, 50);
-      });
-    }
-
-    await stopCamera();
-
-    const destination = new URL(LOOKUP_URL);
-    destination.searchParams.set('itemCode', code);
-
-    window.location.replace(destination.toString());
-  }
-
-  button.addEventListener('click', openCamera);
-
-  backLink.addEventListener('click', function () {
-    leaving = true;
-    releaseTracks();
-  });
-
-  window.addEventListener('pagehide', function () {
-    leaving = true;
-    releaseTracks();
-  });
-
-  window.addEventListener('pageshow', function (event) {
-    leaving = false;
-
-    if (event.persisted) {
-      // Reload if Chrome restores a previously stopped camera page.
-      window.location.reload();
-      return;
-    }
-
+    // Start immediately, without waiting for a button tap.
     openCamera();
-  });
-
-  // No visibilitychange handler:
-  // temporary visibility changes must not interrupt startup.
-    // Start the camera immediately when the script loads.
-  openCamera();
-</script>
+  </script>
 </body>
 </html>
