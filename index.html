@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1">
+
   <title>Scan Shelf QR</title>
 
   <style>
@@ -16,10 +18,10 @@
 
     body {
       margin: 0;
-      padding: 20px 16px;
+      padding: 24px 16px;
       background: #f5f8f9;
       color: #172b36;
-      font: 16px/1.45 Arial, sans-serif;
+      font: 18px/1.45 Arial, sans-serif;
     }
 
     main {
@@ -29,7 +31,7 @@
 
     h1 {
       margin: 0 0 8px;
-      font-size: 26px;
+      font-size: 28px;
     }
 
     p {
@@ -44,11 +46,18 @@
       background: white;
     }
 
+    #reader video {
+      display: block !important;
+      width: 100% !important;
+      height: auto !important;
+    }
+
     button,
     .back {
       display: block;
       width: 100%;
-      padding: 15px;
+      min-height: 56px;
+      padding: 16px;
       border: 0;
       border-radius: 12px;
       font: inherit;
@@ -68,15 +77,22 @@
     }
 
     .back {
-      margin-top: 12px;
+      margin-top: 16px;
       border: 1px solid #dbe4e8;
       background: white;
       color: #126b50;
     }
 
     #status {
-      min-height: 48px;
+      min-height: 54px;
       overflow-wrap: anywhere;
+    }
+
+    .version {
+      margin-top: 20px;
+      font-size: 12px;
+      text-align: center;
+      color: #7b8b94;
     }
   </style>
 </head>
@@ -86,17 +102,23 @@
     <h1>Scan Shelf QR</h1>
     <p>Point the camera at the shelf QR code.</p>
 
-    <button id="start" type="button" hidden>
-      Open camera
-    </button>
-
     <div id="reader"></div>
 
     <p id="status" aria-live="polite">
       Opening camera…
     </p>
 
-    <a id="back" class="back">Back to lookup</a>
+    <button id="start" type="button">
+      Restart camera
+    </button>
+
+    <a id="back" class="back">
+      Back to lookup
+    </a>
+
+    <p class="version">
+      Scanner version: 2026-10-05.3
+    </p>
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
@@ -107,45 +129,134 @@
 
     const button = document.getElementById('start');
     const status = document.getElementById('status');
+    const reader = document.getElementById('reader');
     const backLink = document.getElementById('back');
 
     backLink.href = LOOKUP_URL;
 
     let scanner = null;
-    let starting = false;
     let detected = false;
+    let leaving = false;
+    let queue = Promise.resolve();
+    let openingTimer = null;
 
-    async function openCamera() {
-      if (starting || detected || (scanner && scanner.isScanning)) {
-        return;
-      }
+    // Keep camera operations in order.
+    function schedule(operation) {
+      queue = queue
+        .then(operation)
+        .catch(function (error) {
+          if (!leaving && !document.hidden) {
+            showError(error);
+          }
+        });
 
-      if (typeof Html5Qrcode === 'undefined') {
-        status.textContent =
-          'Scanner could not load. Check your internet connection and refresh.';
-        button.hidden = false;
-        return;
-      }
+      return queue;
+    }
 
-      starting = true;
-      button.disabled = true;
-      button.hidden = true;
-      status.textContent = 'Opening camera…';
+    function showError(error) {
+      clearTimeout(openingTimer);
 
-      try {
-        if (!scanner) {
-          scanner = new Html5Qrcode('reader', {
-            formatsToSupport: [
-              Html5QrcodeSupportedFormats.QR_CODE
-            ],
-            verbose: false
+      button.hidden = false;
+      button.disabled = false;
+      button.textContent = 'Restart camera';
+
+      const message = String(
+        error && error.message ? error.message : error
+      );
+
+      status.textContent = 'Camera error: ' + message;
+    }
+
+    // Release any camera tracks still attached to the preview.
+    function releaseTracks() {
+      reader.querySelectorAll('video').forEach(function (video) {
+        const stream = video.srcObject;
+
+        if (stream && typeof stream.getTracks === 'function') {
+          stream.getTracks().forEach(function (track) {
+            track.stop();
           });
         }
+      });
+    }
 
+    async function stopCamera() {
+      const previous = scanner;
+      scanner = null;
+
+      if (previous) {
+        try {
+          if (previous.isScanning) {
+            await previous.stop();
+          }
+        } catch (error) {
+          // Release remaining tracks below.
+        }
+      }
+
+      releaseTracks();
+
+      if (previous) {
+        try {
+          previous.clear();
+        } catch (error) {
+          // Reset the reader below.
+        }
+      }
+
+      reader.innerHTML = '';
+    }
+
+    async function startCamera() {
+      if (leaving || document.hidden || detected) {
+        return;
+      }
+
+      await stopCamera();
+
+      if (typeof Html5Qrcode === 'undefined') {
+        throw new Error(
+          'Scanner library did not load. Check your internet connection and tap Restart camera.'
+        );
+      }
+
+      if (!navigator.mediaDevices ||
+          !navigator.mediaDevices.getUserMedia) {
+        throw new Error(
+          'Camera access is unavailable. Open this GitHub Pages address directly in Chrome.'
+        );
+      }
+
+      button.hidden = false;
+      button.disabled = false;
+      button.textContent = 'Restart camera';
+
+      status.textContent = 'Opening camera…';
+
+      clearTimeout(openingTimer);
+
+      openingTimer = setTimeout(function () {
+        if (!detected && !leaving && !document.hidden) {
+          status.textContent =
+            'If the preview stays dark, tap Restart camera. Allow camera access if Chrome asks.';
+        }
+      }, 12000);
+
+      scanner = new Html5Qrcode('reader', {
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.QR_CODE
+        ],
+        verbose: false
+      });
+
+      try {
         await scanner.start(
-          { facingMode: 'environment' },
+          {
+            facingMode: 'environment'
+          },
           {
             fps: 10,
+
             qrbox: function (width, height) {
               const size = Math.floor(
                 Math.min(width, height) * 0.7
@@ -163,281 +274,119 @@
           }
         );
 
+        clearTimeout(openingTimer);
+
+        // The page may have been hidden during startup.
+        if (leaving || document.hidden) {
+          await stopCamera();
+          return;
+        }
+
+        const video = reader.querySelector('video');
+
+        if (video) {
+          video.muted = true;
+          video.setAttribute('playsinline', '');
+
+          try {
+            await video.play();
+          } catch (error) {
+            if (!detected) {
+              status.textContent =
+                'Tap Restart camera if the preview stays dark.';
+            }
+            return;
+          }
+        }
+
         if (!detected) {
           status.textContent =
             'Hold the QR code steady inside the frame.';
         }
       } catch (error) {
-        button.hidden = false;
-        button.textContent = 'Retry camera';
-
-        const errorText = String(
-          error && error.message ? error.message : error
-        );
-
-        if (/NotAllowed|Permission|denied/i.test(errorText)) {
-          status.textContent =
-            'Allow camera access in Chrome, then tap Retry camera.';
-        } else if (/NotFound|DevicesNotFound/i.test(errorText)) {
-          status.textContent =
-            'No camera was found. Open this page on your phone.';
-        } else {
-          status.textContent =
-            'Camera could not open. Close other apps using the camera and try again.';
-        }
-      } finally {
-        starting = false;
-        button.disabled = false;
-      }
-    }
-
-    async function onQrDetected(text) {
-      if (detected) return;
-
-      const code = String(text).trim().toUpperCase();
-      if (!code) return;
-
-      detected = true;
-      status.textContent =
-        'Found ' + code + '. Opening result…';
-
-      try {
-        await scanner.stop();
-      } catch (error) {
-        // Leaving the page also releases the camera.
-      }
-
-      const destination = new URL(LOOKUP_URL);
-      destination.searchParams.set('itemCode', code);
-
-      window.location.replace(destination.toString());
-    }
-
-    button.addEventListener('click', openCamera);
-
-    // Open the camera automatically when the page loads.
-    openCamera();
-  <script>
-  const LOOKUP_URL =
-    'https://script.google.com/macros/s/AKfycbxyHlRba23KwsR8MAxhaksO0IG_pso2YxzZpaCcNLQajK1gd8M9SrRYnMGVOvh065fm_g/exec';
-
-  const button = document.getElementById('start');
-  const status = document.getElementById('status');
-  const reader = document.getElementById('reader');
-  const backLink = document.getElementById('back');
-
-  backLink.href = LOOKUP_URL;
-
-  let scanner = null;
-  let detected = false;
-  let leaving = false;
-  let queue = Promise.resolve();
-  let openingTimer;
-
-  // Run camera operations in order, avoiding overlapping starts.
-  function schedule(operation) {
-    queue = queue.then(operation).catch(function (error) {
-      showError(error);
-    });
-    return queue;
-  }
-
-  function showError(error) {
-    clearTimeout(openingTimer);
-    button.hidden = false;
-    button.disabled = false;
-    button.textContent = 'Restart camera';
-
-    const message = String(
-      error && error.message ? error.message : error
-    );
-
-    status.textContent = 'Camera error: ' + message;
-  }
-
-  function releaseTracks() {
-    reader.querySelectorAll('video').forEach(function (video) {
-      const stream = video.srcObject;
-
-      if (stream && typeof stream.getTracks === 'function') {
-        stream.getTracks().forEach(function (track) {
-          track.stop();
-        });
-      }
-    });
-  }
-
-  async function stopCamera() {
-    const previous = scanner;
-    scanner = null;
-
-    if (previous) {
-      try {
-        if (previous.isScanning) {
-          await previous.stop();
-        }
-      } catch (error) {
-        // Also release any remaining tracks below.
-      }
-    }
-
-    releaseTracks();
-
-    if (previous) {
-      try {
-        previous.clear();
-      } catch (error) {
-        // The reader is reset below.
-      }
-    }
-
-    reader.innerHTML = '';
-  }
-
-  async function startCamera() {
-    if (leaving || document.hidden || detected) return;
-
-    await stopCamera();
-
-    if (typeof Html5Qrcode === 'undefined') {
-      throw new Error(
-        'Scanner library did not load. Check your internet connection.'
-      );
-    }
-
-    button.hidden = false;
-    button.disabled = false;
-    button.textContent = 'Restart camera';
-    status.textContent = 'Opening camera…';
-
-    clearTimeout(openingTimer);
-    openingTimer = setTimeout(function () {
-      if (!detected && !leaving) {
-        status.textContent =
-          'If the preview stays dark, tap Restart camera.';
-      }
-    }, 12000);
-
-    scanner = new Html5Qrcode('reader', {
-      formatsToSupport: [
-        Html5QrcodeSupportedFormats.QR_CODE
-      ],
-      verbose: false
-    });
-
-    try {
-      await scanner.start(
-        { facingMode: 'environment' },
-        {
-          fps: 10,
-          qrbox: function (width, height) {
-            const size = Math.floor(
-              Math.min(width, height) * 0.7
-            );
-
-            return { width: size, height: size };
-          }
-        },
-        onQrDetected,
-        function () {
-          // Continue looking for a readable QR code.
-        }
-      );
-
-      clearTimeout(openingTimer);
-
-      // The user may have left while permission was being requested.
-      if (leaving || document.hidden) {
         await stopCamera();
+
+        if (!leaving && !document.hidden) {
+          showError(error);
+        }
+      }
+    }
+
+    function onQrDetected(text) {
+      if (detected || leaving || document.hidden) {
         return;
       }
 
-      const video = reader.querySelector('video');
+      const code = String(text).trim().toUpperCase();
 
-      if (video) {
-        video.muted = true;
-        video.setAttribute('playsinline', '');
-        video.style.display = 'block';
-        video.style.width = '100%';
-
-        try {
-          await video.play();
-        } catch (error) {
-          status.textContent =
-            'Tap Restart camera if the preview stays dark.';
-          return;
-        }
+      if (!code) {
+        return;
       }
 
-      if (!detected) {
-        status.textContent =
-          'Hold the QR code steady inside the frame.';
-      }
-    } catch (error) {
-      await stopCamera();
+      detected = true;
+      clearTimeout(openingTimer);
 
-      if (!leaving && !document.hidden) {
-        showError(error);
-      }
+      button.disabled = true;
+
+      status.textContent =
+        'Found ' + code + '. Opening result…';
+
+      schedule(async function () {
+        await stopCamera();
+
+        const destination = new URL(LOOKUP_URL);
+        destination.searchParams.set('itemCode', code);
+
+        window.location.replace(destination.toString());
+      });
     }
-  }
 
-  function onQrDetected(text) {
-    if (detected || leaving || document.hidden) return;
+    // Reload with a fresh URL to recover a stalled camera.
+    button.addEventListener('click', function () {
+      leaving = true;
+      clearTimeout(openingTimer);
+      releaseTracks();
 
-    const code = String(text).trim().toUpperCase();
-    if (!code) return;
-
-    detected = true;
-    clearTimeout(openingTimer);
-    button.disabled = true;
-    status.textContent =
-      'Found ' + code + '. Opening result…';
-
-    schedule(async function () {
-      await stopCamera();
-
-      const destination = new URL(LOOKUP_URL);
-      destination.searchParams.set('itemCode', code);
+      const destination = new URL(window.location.href);
+      destination.searchParams.set('restart', Date.now());
 
       window.location.replace(destination.toString());
     });
-  }
 
-  // A fresh page reload also recovers a stalled startup.
-  button.addEventListener('click', function () {
-    releaseTracks();
-    window.location.reload();
-  });
-
-  backLink.addEventListener('click', function () {
-    leaving = true;
-    releaseTracks();
-  });
-
-  window.addEventListener('pagehide', function () {
-    leaving = true;
-    clearTimeout(openingTimer);
-    releaseTracks();
-    schedule(stopCamera);
-  });
-
-  // Includes returning through Chrome's Back button.
-  window.addEventListener('pageshow', function () {
-    leaving = false;
-    detected = false;
-    schedule(startCamera);
-  });
-
-  document.addEventListener('visibilitychange', function () {
-    if (document.hidden) {
+    backLink.addEventListener('click', function () {
+      leaving = true;
       clearTimeout(openingTimer);
       releaseTracks();
+    });
+
+    // Release the camera when leaving the page.
+    window.addEventListener('pagehide', function () {
+      leaving = true;
+      clearTimeout(openingTimer);
+      releaseTracks();
+
       schedule(stopCamera);
-    } else if (!leaving && !detected) {
+    });
+
+    // Start on initial load and when restored by Chrome.
+    window.addEventListener('pageshow', function () {
+      leaving = false;
+      detected = false;
+
       schedule(startCamera);
-    }
-  });
-</script>
+    });
+
+    // Stop when switching apps and restart when returning.
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) {
+        clearTimeout(openingTimer);
+        releaseTracks();
+
+        schedule(stopCamera);
+      } else if (!leaving && !detected) {
+        schedule(startCamera);
+      }
+    });
+  </script>
 </body>
 </html>
