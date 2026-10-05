@@ -343,15 +343,11 @@
 
     // Reload with a fresh URL to recover a stalled camera.
     button.addEventListener('click', function () {
-      leaving = true;
-      clearTimeout(openingTimer);
-      releaseTracks();
+  leaving = false;
+  detected = false;
 
-      const destination = new URL(window.location.href);
-      destination.searchParams.set('restart', Date.now());
-
-      window.location.replace(destination.toString());
-    });
+  schedule(startCamera);
+});
 
     backLink.addEventListener('click', function () {
       leaving = true;
@@ -370,12 +366,12 @@
 
     // Start on initial load and when restored by Chrome.
     window.addEventListener('pageshow', function () {
-      leaving = false;
-      detected = false;
+  leaving = false;
+  detected = false;
 
-      schedule(startCamera);
-    });
-
+  button.textContent = 'Open camera';
+  status.textContent = 'Tap Open camera to start scanning.';
+});
     // Stop when switching apps and restart when returning.
     document.addEventListener('visibilitychange', function () {
       if (document.hidden) {
