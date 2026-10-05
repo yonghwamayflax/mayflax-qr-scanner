@@ -217,6 +217,227 @@
 
     // Open the camera automatically when the page loads.
     openCamera();
-  </script>
+  <script>
+  const LOOKUP_URL =
+    'https://script.google.com/macros/s/AKfycbxyHlRba23KwsR8MAxhaksO0IG_pso2YxzZpaCcNLQajK1gd8M9SrRYnMGVOvh065fm_g/exec';
+
+  const button = document.getElementById('start');
+  const status = document.getElementById('status');
+  const reader = document.getElementById('reader');
+  const backLink = document.getElementById('back');
+
+  backLink.href = LOOKUP_URL;
+
+  let scanner = null;
+  let detected = false;
+  let leaving = false;
+  let queue = Promise.resolve();
+  let openingTimer;
+
+  // Run camera operations in order, avoiding overlapping starts.
+  function schedule(operation) {
+    queue = queue.then(operation).catch(function (error) {
+      showError(error);
+    });
+    return queue;
+  }
+
+  function showError(error) {
+    clearTimeout(openingTimer);
+    button.hidden = false;
+    button.disabled = false;
+    button.textContent = 'Restart camera';
+
+    const message = String(
+      error && error.message ? error.message : error
+    );
+
+    status.textContent = 'Camera error: ' + message;
+  }
+
+  function releaseTracks() {
+    reader.querySelectorAll('video').forEach(function (video) {
+      const stream = video.srcObject;
+
+      if (stream && typeof stream.getTracks === 'function') {
+        stream.getTracks().forEach(function (track) {
+          track.stop();
+        });
+      }
+    });
+  }
+
+  async function stopCamera() {
+    const previous = scanner;
+    scanner = null;
+
+    if (previous) {
+      try {
+        if (previous.isScanning) {
+          await previous.stop();
+        }
+      } catch (error) {
+        // Also release any remaining tracks below.
+      }
+    }
+
+    releaseTracks();
+
+    if (previous) {
+      try {
+        previous.clear();
+      } catch (error) {
+        // The reader is reset below.
+      }
+    }
+
+    reader.innerHTML = '';
+  }
+
+  async function startCamera() {
+    if (leaving || document.hidden || detected) return;
+
+    await stopCamera();
+
+    if (typeof Html5Qrcode === 'undefined') {
+      throw new Error(
+        'Scanner library did not load. Check your internet connection.'
+      );
+    }
+
+    button.hidden = false;
+    button.disabled = false;
+    button.textContent = 'Restart camera';
+    status.textContent = 'Opening camera…';
+
+    clearTimeout(openingTimer);
+    openingTimer = setTimeout(function () {
+      if (!detected && !leaving) {
+        status.textContent =
+          'If the preview stays dark, tap Restart camera.';
+      }
+    }, 12000);
+
+    scanner = new Html5Qrcode('reader', {
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.QR_CODE
+      ],
+      verbose: false
+    });
+
+    try {
+      await scanner.start(
+        { facingMode: 'environment' },
+        {
+          fps: 10,
+          qrbox: function (width, height) {
+            const size = Math.floor(
+              Math.min(width, height) * 0.7
+            );
+
+            return { width: size, height: size };
+          }
+        },
+        onQrDetected,
+        function () {
+          // Continue looking for a readable QR code.
+        }
+      );
+
+      clearTimeout(openingTimer);
+
+      // The user may have left while permission was being requested.
+      if (leaving || document.hidden) {
+        await stopCamera();
+        return;
+      }
+
+      const video = reader.querySelector('video');
+
+      if (video) {
+        video.muted = true;
+        video.setAttribute('playsinline', '');
+        video.style.display = 'block';
+        video.style.width = '100%';
+
+        try {
+          await video.play();
+        } catch (error) {
+          status.textContent =
+            'Tap Restart camera if the preview stays dark.';
+          return;
+        }
+      }
+
+      if (!detected) {
+        status.textContent =
+          'Hold the QR code steady inside the frame.';
+      }
+    } catch (error) {
+      await stopCamera();
+
+      if (!leaving && !document.hidden) {
+        showError(error);
+      }
+    }
+  }
+
+  function onQrDetected(text) {
+    if (detected || leaving || document.hidden) return;
+
+    const code = String(text).trim().toUpperCase();
+    if (!code) return;
+
+    detected = true;
+    clearTimeout(openingTimer);
+    button.disabled = true;
+    status.textContent =
+      'Found ' + code + '. Opening result…';
+
+    schedule(async function () {
+      await stopCamera();
+
+      const destination = new URL(LOOKUP_URL);
+      destination.searchParams.set('itemCode', code);
+
+      window.location.replace(destination.toString());
+    });
+  }
+
+  // A fresh page reload also recovers a stalled startup.
+  button.addEventListener('click', function () {
+    releaseTracks();
+    window.location.reload();
+  });
+
+  backLink.addEventListener('click', function () {
+    leaving = true;
+    releaseTracks();
+  });
+
+  window.addEventListener('pagehide', function () {
+    leaving = true;
+    clearTimeout(openingTimer);
+    releaseTracks();
+    schedule(stopCamera);
+  });
+
+  // Includes returning through Chrome's Back button.
+  window.addEventListener('pageshow', function () {
+    leaving = false;
+    detected = false;
+    schedule(startCamera);
+  });
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+      clearTimeout(openingTimer);
+      releaseTracks();
+      schedule(stopCamera);
+    } else if (!leaving && !detected) {
+      schedule(startCamera);
+    }
+  });
+</script>
 </body>
 </html>
