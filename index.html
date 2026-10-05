@@ -359,8 +359,13 @@
       }
     });
 
-    // Start immediately, without waiting for a button tap.
-    openCamera();
+    // Start only when the user taps the camera button.
+button.hidden = false;
+button.disabled = false;
+button.textContent = 'Open camera';
+
+status.textContent =
+  'Tap Open camera, then point at the shelf QR code.';
   </script>
 </body>
 </html>
